@@ -206,7 +206,7 @@ fn contract_type() {
 
     assert_eq!(
         first_error(ns.diagnostics),
-        "implicit conversion from uint8 to address not allowed"
+        "implicit conversion from int to address not allowed"
     );
 
     let ns = parse_and_resolve(

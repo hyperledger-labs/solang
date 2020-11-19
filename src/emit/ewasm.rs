@@ -9,7 +9,7 @@ use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::context::Context;
 use inkwell::module::Linkage;
 use inkwell::types::IntType;
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::values::{ArrayValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
 use inkwell::OptimizationLevel;
@@ -919,12 +919,13 @@ impl<'a> TargetRuntime<'a> for EwasmTarget {
         slot: PointerValue,
         dest: PointerValue,
     ) {
-        if dest
-            .get_type()
-            .get_element_type()
-            .into_int_type()
-            .get_bit_width()
-            == 256
+        if !dest.get_type().get_element_type().is_array_type()
+            && dest
+                .get_type()
+                .get_element_type()
+                .into_int_type()
+                .get_bit_width()
+                == 256
         {
             contract.builder.build_call(
                 contract.module.get_function("storageStore").unwrap(),
@@ -1040,6 +1041,54 @@ impl<'a> TargetRuntime<'a> for EwasmTarget {
                 "loaded_int",
             )
             .into_int_value()
+    }
+
+    fn get_storage_address(
+        &self,
+        contract: &Contract<'a>,
+        _function: FunctionValue,
+        slot: PointerValue<'a>,
+    ) -> ArrayValue<'a> {
+        let dest = contract.builder.build_array_alloca(
+            contract.context.i8_type(),
+            contract.context.i32_type().const_int(32, false),
+            "buf",
+        );
+
+        contract.builder.build_call(
+            contract.module.get_function("storageLoad").unwrap(),
+            &[
+                contract
+                    .builder
+                    .build_pointer_cast(
+                        slot,
+                        contract.context.i8_type().ptr_type(AddressSpace::Generic),
+                        "",
+                    )
+                    .into(),
+                contract
+                    .builder
+                    .build_pointer_cast(
+                        dest,
+                        contract.context.i8_type().ptr_type(AddressSpace::Generic),
+                        "",
+                    )
+                    .into(),
+            ],
+            "",
+        );
+
+        contract
+            .builder
+            .build_load(
+                contract.builder.build_pointer_cast(
+                    dest,
+                    contract.address_type().ptr_type(AddressSpace::Generic),
+                    "",
+                ),
+                "loaded_address",
+            )
+            .into_array_value()
     }
 
     /// ewasm has no keccak256 host function, so call our implementation
@@ -1510,7 +1559,7 @@ impl<'a> TargetRuntime<'a> for EwasmTarget {
     }
 
     /// Terminate execution, destroy contract and send remaining funds to addr
-    fn selfdestruct<'b>(&self, contract: &Contract<'b>, addr: IntValue<'b>) {
+    fn selfdestruct<'b>(&self, contract: &Contract<'b>, addr: ArrayValue<'b>) {
         let address = contract
             .builder
             .build_alloca(contract.address_type(), "address");
@@ -1576,9 +1625,12 @@ impl<'a> TargetRuntime<'a> for EwasmTarget {
                 .builder
                 .build_alloca(contract.address_type(), "address");
 
+            let mut precompile_address = [contract.context.i8_type().const_zero(); 20];
+            precompile_address[19] = contract.context.i8_type().const_int(precompile, false);
+
             contract.builder.build_store(
                 address,
-                contract.address_type().const_int(precompile, false),
+                contract.context.i8_type().const_array(&precompile_address),
             );
 
             contract.builder.build_call(
@@ -1843,7 +1895,7 @@ impl<'a> TargetRuntime<'a> for EwasmTarget {
             ast::Expression::Builtin(_, _, ast::Builtin::Balance, addr) => {
                 let addr = self
                     .expression(contract, &addr[0], vartab, function)
-                    .into_int_value();
+                    .into_array_value();
 
                 let address = contract
                     .builder

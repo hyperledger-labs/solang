@@ -4,7 +4,7 @@ use crate::sema::ast;
 use inkwell::context::Context;
 use inkwell::module::Linkage;
 use inkwell::types::{BasicType, IntType};
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::values::{ArrayValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
 use inkwell::OptimizationLevel;
@@ -558,16 +558,8 @@ impl SubstrateTarget {
                 );
                 (val.into(), 1)
             }
-            ast::Type::Contract(_)
-            | ast::Type::Address(_)
-            | ast::Type::Uint(_)
-            | ast::Type::Int(_) => {
-                let bits = match ty {
-                    ast::Type::Uint(n) | ast::Type::Int(n) => *n as u32,
-                    _ => contract.ns.address_length as u32 * 8,
-                };
-
-                let int_type = contract.context.custom_width_int_type(bits);
+            ast::Type::Uint(bits) | ast::Type::Int(bits) => {
+                let int_type = contract.context.custom_width_int_type(*bits as u32);
 
                 let val = contract.builder.build_load(
                     contract.builder.build_pointer_cast(
@@ -578,7 +570,21 @@ impl SubstrateTarget {
                     "",
                 );
 
-                let len = bits as u64 / 8;
+                let len = *bits as u64 / 8;
+
+                (val, len)
+            }
+            ast::Type::Contract(_) | ast::Type::Address(_) => {
+                let val = contract.builder.build_load(
+                    contract.builder.build_pointer_cast(
+                        src,
+                        contract.address_type().ptr_type(AddressSpace::Generic),
+                        "",
+                    ),
+                    "",
+                );
+
+                let len = contract.ns.address_length as u64;
 
                 (val, len)
             }
@@ -1013,10 +1019,7 @@ impl SubstrateTarget {
 
                 1
             }
-            ast::Type::Contract(_)
-            | ast::Type::Address(_)
-            | ast::Type::Uint(_)
-            | ast::Type::Int(_) => {
+            ast::Type::Uint(_) | ast::Type::Int(_) => {
                 let len = match ty {
                     ast::Type::Uint(n) | ast::Type::Int(n) => *n as u64 / 8,
                     _ => contract.ns.address_length as u64,
@@ -1040,6 +1043,24 @@ impl SubstrateTarget {
                 );
 
                 len
+            }
+            ast::Type::Contract(_) | ast::Type::Address(_) => {
+                let arg = if load {
+                    contract.builder.build_load(arg.into_pointer_value(), "")
+                } else {
+                    arg
+                };
+
+                contract.builder.build_store(
+                    contract.builder.build_pointer_cast(
+                        dest,
+                        contract.address_type().ptr_type(AddressSpace::Generic),
+                        "",
+                    ),
+                    arg.into_array_value(),
+                );
+
+                contract.ns.address_length as u64
             }
             ast::Type::Bytes(n) => {
                 let val = if load {
@@ -1723,6 +1744,21 @@ impl<'a> TargetRuntime<'a> for SubstrateTarget {
         dest: PointerValue,
     ) {
         // TODO: check for non-zero
+        let dest_ty = dest.get_type().get_element_type();
+
+        let dest_size = if dest_ty.is_array_type() {
+            dest_ty
+                .into_array_type()
+                .size_of()
+                .expect("array should be fixed size")
+                .const_cast(contract.context.i32_type(), false)
+        } else {
+            dest_ty
+                .into_int_type()
+                .size_of()
+                .const_cast(contract.context.i32_type(), false)
+        };
+
         contract.builder.build_call(
             contract.module.get_function("seal_set_storage").unwrap(),
             &[
@@ -1742,12 +1778,7 @@ impl<'a> TargetRuntime<'a> for SubstrateTarget {
                         "",
                     )
                     .into(),
-                dest.get_type()
-                    .get_element_type()
-                    .into_int_type()
-                    .size_of()
-                    .const_cast(contract.context.i32_type(), false)
-                    .into(),
+                dest_size.into(),
             ],
             "",
         );
@@ -2060,6 +2091,78 @@ impl<'a> TargetRuntime<'a> for SubstrateTarget {
             .left()
             .unwrap()
             .into_pointer_value()
+    }
+
+    /// Read string from substrate storage
+    fn get_storage_address(
+        &self,
+        contract: &Contract<'a>,
+        _function: FunctionValue,
+        slot: PointerValue<'a>,
+    ) -> ArrayValue<'a> {
+        let scratch_buf = contract.builder.build_pointer_cast(
+            contract.scratch.unwrap().as_pointer_value(),
+            contract.context.i8_type().ptr_type(AddressSpace::Generic),
+            "scratch_buf",
+        );
+        let scratch_len = contract.scratch_len.unwrap().as_pointer_value();
+
+        contract.builder.build_store(
+            scratch_len,
+            contract
+                .context
+                .i32_type()
+                .const_int(contract.ns.address_length as u64, false),
+        );
+
+        let exists = contract
+            .builder
+            .build_call(
+                contract.module.get_function("seal_get_storage").unwrap(),
+                &[
+                    contract
+                        .builder
+                        .build_pointer_cast(
+                            slot,
+                            contract.context.i8_type().ptr_type(AddressSpace::Generic),
+                            "",
+                        )
+                        .into(),
+                    scratch_buf.into(),
+                    scratch_len.into(),
+                ],
+                "",
+            )
+            .try_as_basic_value()
+            .left()
+            .unwrap();
+
+        let exists = contract.builder.build_int_compare(
+            IntPredicate::EQ,
+            exists.into_int_value(),
+            contract.context.i32_type().const_zero(),
+            "storage_exists",
+        );
+
+        contract
+            .builder
+            .build_select(
+                exists,
+                contract
+                    .builder
+                    .build_load(
+                        contract.builder.build_pointer_cast(
+                            scratch_buf,
+                            contract.address_type().ptr_type(AddressSpace::Generic),
+                            "address_ptr",
+                        ),
+                        "address",
+                    )
+                    .into_array_value(),
+                contract.address_type().const_zero(),
+                "retrieved_address",
+            )
+            .into_array_value()
     }
 
     /// Read string from substrate storage
@@ -3420,7 +3523,7 @@ impl<'a> TargetRuntime<'a> for SubstrateTarget {
     }
 
     /// Terminate execution, destroy contract and send remaining funds to addr
-    fn selfdestruct<'b>(&self, contract: &Contract<'b>, addr: IntValue<'b>) {
+    fn selfdestruct<'b>(&self, contract: &Contract<'b>, addr: ArrayValue<'b>) {
         let address = contract
             .builder
             .build_alloca(contract.address_type(), "address");
@@ -3814,7 +3917,35 @@ impl<'a> TargetRuntime<'a> for SubstrateTarget {
                 )
             }
             ast::Expression::Builtin(_, _, ast::Builtin::Sender, _) => {
-                get_seal_value!("caller", "seal_caller", 256)
+                let scratch_buf = contract.builder.build_pointer_cast(
+                    contract.scratch.unwrap().as_pointer_value(),
+                    contract.context.i8_type().ptr_type(AddressSpace::Generic),
+                    "scratch_buf",
+                );
+                let scratch_len = contract.scratch_len.unwrap().as_pointer_value();
+
+                contract.builder.build_store(
+                    scratch_len,
+                    contract
+                        .context
+                        .i32_type()
+                        .const_int(contract.ns.address_length as u64, false),
+                );
+
+                contract.builder.build_call(
+                    contract.module.get_function("seal_caller").unwrap(),
+                    &[scratch_buf.into(), scratch_len.into()],
+                    "caller",
+                );
+
+                contract.builder.build_load(
+                    contract.builder.build_pointer_cast(
+                        scratch_buf,
+                        contract.address_type().ptr_type(AddressSpace::Generic),
+                        "",
+                    ),
+                    "caller",
+                )
             }
             ast::Expression::Builtin(_, _, ast::Builtin::Value, _) => {
                 self.value_transferred(contract).into()

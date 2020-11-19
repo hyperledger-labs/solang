@@ -7,7 +7,7 @@ use std::str;
 use inkwell::context::Context;
 use inkwell::module::Linkage;
 use inkwell::types::IntType;
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::values::{ArrayValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
 use inkwell::OptimizationLevel;
@@ -760,7 +760,7 @@ impl<'a> TargetRuntime<'a> for SabreTarget {
     }
 
     /// Terminate execution, destroy contract and send remaining funds to addr
-    fn selfdestruct<'b>(&self, _contract: &Contract<'b>, _addr: IntValue<'b>) {
+    fn selfdestruct<'b>(&self, _contract: &Contract<'b>, _addr: ArrayValue<'b>) {
         panic!("Sabre does not have the concept of selfdestruct");
     }
 

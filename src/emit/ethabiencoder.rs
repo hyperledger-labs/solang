@@ -504,21 +504,41 @@ impl EthAbiEncoder {
                     val,
                 );
             }
-            ast::Type::Contract(_)
-            | ast::Type::Address(_)
-            | ast::Type::Uint(_)
-            | ast::Type::Int(_)
-                if load =>
-            {
-                let n = match ty {
-                    ast::Type::Contract(_) | ast::Type::Address(_) => {
-                        contract.ns.address_length as u16 * 8
-                    }
-                    ast::Type::Uint(b) => *b,
-                    ast::Type::Int(b) => *b,
-                    _ => unreachable!(),
+            ast::Type::Contract(_) | ast::Type::Address(_) => {
+                let arg = if load {
+                    contract.builder.build_load(arg.into_pointer_value(), "")
+                } else {
+                    arg
                 };
 
+                let address = if contract.ns.address_length == 32 {
+                    dest
+                } else {
+                    unsafe {
+                        contract.builder.build_gep(
+                            contract.builder.build_pointer_cast(
+                                dest,
+                                contract.context.i8_type().ptr_type(AddressSpace::Generic),
+                                "dest8",
+                            ),
+                            &[contract
+                                .context
+                                .i32_type()
+                                .const_int(32 - contract.ns.address_length as u64, false)],
+                            "address_ptr",
+                        )
+                    }
+                };
+
+                let address = contract.builder.build_pointer_cast(
+                    address,
+                    contract.address_type().ptr_type(AddressSpace::Generic),
+                    "address_ptr",
+                );
+
+                contract.builder.build_store(address, arg);
+            }
+            ast::Type::Uint(bits) | ast::Type::Int(bits) if load => {
                 let dest8 = contract.builder.build_pointer_cast(
                     dest,
                     contract.context.i8_type().ptr_type(AddressSpace::Generic),
@@ -532,7 +552,7 @@ impl EthAbiEncoder {
                 );
 
                 // first clear/set the upper bits
-                if n < 256 {
+                if *bits < 256 {
                     if let ast::Type::Int(_) = ty {
                         let signdest = unsafe {
                             contract.builder.build_gep(
@@ -540,7 +560,7 @@ impl EthAbiEncoder {
                                 &[contract
                                     .context
                                     .i32_type()
-                                    .const_int((n as u64 / 8) - 1, false)],
+                                    .const_int((*bits as u64 / 8) - 1, false)],
                                 "signbyte",
                             )
                         };
@@ -585,27 +605,13 @@ impl EthAbiEncoder {
                         contract
                             .context
                             .i32_type()
-                            .const_int(n as u64 / 8, false)
+                            .const_int(*bits as u64 / 8, false)
                             .into(),
                     ],
                     "",
                 );
             }
-            ast::Type::Contract(_)
-            | ast::Type::Address(_)
-            | ast::Type::Uint(_)
-            | ast::Type::Int(_)
-                if !load =>
-            {
-                let n = match ty {
-                    ast::Type::Contract(_) | ast::Type::Address(_) => {
-                        contract.ns.address_length as u16 * 8
-                    }
-                    ast::Type::Uint(b) => *b,
-                    ast::Type::Int(b) => *b,
-                    _ => unreachable!(),
-                };
-
+            ast::Type::Uint(bits) | ast::Type::Int(bits) if !load => {
                 let dest8 = contract.builder.build_pointer_cast(
                     dest,
                     contract.context.i8_type().ptr_type(AddressSpace::Generic),
@@ -613,7 +619,7 @@ impl EthAbiEncoder {
                 );
 
                 // first clear/set the upper bits
-                if n < 256 {
+                if *bits < 256 {
                     if let ast::Type::Int(_) = ty {
                         let negative = contract.builder.build_int_compare(
                             IntPredicate::SLT,
@@ -646,7 +652,7 @@ impl EthAbiEncoder {
 
                 let temp = contract
                     .builder
-                    .build_alloca(arg.into_int_value().get_type(), &format!("uint{}", n));
+                    .build_alloca(arg.into_int_value().get_type(), &format!("uint{}", bits));
 
                 contract.builder.build_store(temp, arg.into_int_value());
 
@@ -665,7 +671,7 @@ impl EthAbiEncoder {
                         contract
                             .context
                             .i32_type()
-                            .const_int(n as u64 / 8, false)
+                            .const_int(*bits as u64 / 8, false)
                             .into(),
                     ],
                     "",
@@ -1043,38 +1049,31 @@ impl EthAbiEncoder {
                 val
             }
             ast::Type::Address(_) | ast::Type::Contract(_) => {
-                let int_type = contract
-                    .context
-                    .custom_width_int_type(contract.ns.address_length as u32 * 8);
-                let type_size = int_type.size_of();
+                let address = if contract.ns.address_length == 32 {
+                    data
+                } else {
+                    unsafe {
+                        contract.builder.build_gep(
+                            data,
+                            &[contract
+                                .context
+                                .i32_type()
+                                .const_int(32 - contract.ns.address_length as u64, false)],
+                            "address_ptr",
+                        )
+                    }
+                };
 
-                let store =
-                    to.unwrap_or_else(|| contract.builder.build_alloca(int_type, "address"));
-
-                contract.builder.build_call(
-                    contract.module.get_function("__be32toleN").unwrap(),
-                    &[
-                        data.into(),
-                        contract
-                            .builder
-                            .build_pointer_cast(
-                                store,
-                                contract.context.i8_type().ptr_type(AddressSpace::Generic),
-                                "",
-                            )
-                            .into(),
-                        contract
-                            .builder
-                            .build_int_truncate(type_size, contract.context.i32_type(), "size")
-                            .into(),
-                    ],
-                    "",
+                let address = contract.builder.build_pointer_cast(
+                    address,
+                    contract.address_type().ptr_type(AddressSpace::Generic),
+                    "address_ptr",
                 );
 
                 if to.is_none() {
-                    contract.builder.build_load(store, "address")
+                    contract.builder.build_load(address, "address")
                 } else {
-                    store.into()
+                    address.into()
                 }
             }
             ast::Type::Uint(n) | ast::Type::Int(n)

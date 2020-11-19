@@ -951,6 +951,7 @@ impl TestRuntime {
     pub fn function(&mut self, name: &str, args: Vec<u8>) {
         let m = self.abi.get_function(name).unwrap();
 
+        self.vm.memory = MemoryInstance::alloc(Pages(16), Some(Pages(16))).unwrap();
         let module = self.create_module(&self.accounts.get(&self.vm.address).unwrap().0);
 
         self.vm.input = m.selector().into_iter().chain(args).collect();

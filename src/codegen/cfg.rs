@@ -261,8 +261,11 @@ impl ControlFlowGraph {
             Expression::BoolLiteral(_, false) => "false".to_string(),
             Expression::BoolLiteral(_, true) => "true".to_string(),
             Expression::BytesLiteral(_, _, s) => format!("hex\"{}\"", hex::encode(s)),
+            Expression::NumberLiteral(_, ty @ Type::Address(_), n) => {
+                format!("{} {:#x}", ty.to_string(ns), n)
+            }
             Expression::NumberLiteral(_, ty, n) => {
-                format!("{} {}", ty.to_string(ns), n.to_str_radix(10))
+                format!("{} {}", ty.to_string(ns), n)
             }
             Expression::StructLiteral(_, _, expr) => format!(
                 "struct {{ {} }}",

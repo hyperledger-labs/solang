@@ -5,11 +5,10 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::str;
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, Sign};
 use num_traits::One;
 use num_traits::ToPrimitive;
-use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use crate::Target;
 use inkwell::builder::Builder;
@@ -19,7 +18,7 @@ use inkwell::module::{Linkage, Module};
 use inkwell::passes::PassManager;
 use inkwell::targets::{CodeModel, FileType, RelocMode, TargetTriple};
 use inkwell::types::BasicTypeEnum;
-use inkwell::types::{BasicType, FunctionType, IntType, StringRadix};
+use inkwell::types::{ArrayType, BasicType, FunctionType, IntType, StringRadix};
 use inkwell::values::{
     ArrayValue, BasicValueEnum, FunctionValue, GlobalValue, IntValue, PhiValue, PointerValue,
 };
@@ -102,6 +101,15 @@ pub trait TargetRuntime<'a> {
         slot: PointerValue<'a>,
         ty: IntType<'a>,
     ) -> IntValue<'a>;
+
+    fn get_storage_address(
+        &self,
+        _contract: &Contract<'a>,
+        _function: FunctionValue,
+        _slot: PointerValue<'a>,
+    ) -> ArrayValue<'a> {
+        unimplemented!();
+    }
 
     // Bytes and string have special storage layout
     fn set_storage_string(
@@ -234,7 +242,7 @@ pub trait TargetRuntime<'a> {
     fn value_transferred<'b>(&self, contract: &Contract<'b>) -> IntValue<'b>;
 
     /// Terminate execution, destroy contract and send remaining funds to addr
-    fn selfdestruct<'b>(&self, contract: &Contract<'b>, addr: IntValue<'b>);
+    fn selfdestruct<'b>(&self, contract: &Contract<'b>, addr: ArrayValue<'b>);
 
     /// Crypto Hash
     fn hash<'b>(
@@ -567,6 +575,19 @@ pub trait TargetRuntime<'a> {
 
                 ret.into()
             }
+            ast::Type::Address(_) | ast::Type::Contract(_) => {
+                contract.builder.build_store(slot_ptr, *slot);
+
+                let ret = self.get_storage_address(contract, function, slot_ptr);
+
+                *slot = contract.builder.build_int_add(
+                    *slot,
+                    contract.number_literal(256, &BigInt::one()),
+                    "string",
+                );
+
+                ret.into()
+            }
             _ => {
                 contract.builder.build_store(slot_ptr, *slot);
 
@@ -864,6 +885,19 @@ pub trait TargetRuntime<'a> {
 
                 self.set_storage(contract, function, slot_ptr, m);
             }
+            ast::Type::Address(_) | ast::Type::Contract(_) => {
+                let address = contract
+                    .builder
+                    .build_alloca(contract.address_type(), "address");
+
+                contract
+                    .builder
+                    .build_store(address, dest.into_array_value());
+
+                contract.builder.build_store(slot_ptr, *slot);
+
+                self.set_storage(contract, function, slot_ptr, address);
+            }
             _ => {
                 contract.builder.build_store(slot_ptr, *slot);
 
@@ -1011,6 +1045,32 @@ pub trait TargetRuntime<'a> {
                 .bool_type()
                 .const_int(*val as u64, false)
                 .into(),
+            Expression::NumberLiteral(_, ast::Type::Address(_), val) => {
+                // address can be negative; "address(-1)" is 0xffff...
+                let mut bs = val.to_signed_bytes_be();
+
+                // make sure it's no more than 32
+                if bs.len() > contract.ns.address_length {
+                    // remove leading bytes
+                    for _ in 0..bs.len() - contract.ns.address_length {
+                        bs.remove(0);
+                    }
+                } else {
+                    // insert leading bytes
+                    let val = if val.sign() == Sign::Minus { 0xff } else { 0 };
+
+                    for _ in 0..contract.ns.address_length - bs.len() {
+                        bs.insert(0, val);
+                    }
+                }
+
+                let address = bs
+                    .iter()
+                    .map(|b| contract.context.i8_type().const_int(*b as u64, false))
+                    .collect::<Vec<IntValue>>();
+
+                contract.context.i8_type().const_array(&address).into()
+            }
             Expression::NumberLiteral(_, ty, n) => contract
                 .number_literal(ty.bits(contract.ns) as u32, n)
                 .into(),
@@ -1414,17 +1474,50 @@ pub trait TargetRuntime<'a> {
                     .unwrap()
             }
             Expression::Equal(_, l, r) => {
-                let left = self
-                    .expression(contract, l, vartab, function)
-                    .into_int_value();
-                let right = self
-                    .expression(contract, r, vartab, function)
-                    .into_int_value();
+                if let ast::Type::Address(_) = l.ty() {
+                    let mut res = contract.context.bool_type().const_int(1, false);
+                    let left = self
+                        .expression(contract, l, vartab, function)
+                        .into_array_value();
+                    let right = self
+                        .expression(contract, r, vartab, function)
+                        .into_array_value();
 
-                contract
-                    .builder
-                    .build_int_compare(IntPredicate::EQ, left, right, "")
-                    .into()
+                    for index in 0..contract.ns.address_length {
+                        let l = contract
+                            .builder
+                            .build_extract_value(left, index as u32, "left")
+                            .unwrap()
+                            .into_int_value();
+                        let r = contract
+                            .builder
+                            .build_extract_value(right, index as u32, "right")
+                            .unwrap()
+                            .into_int_value();
+
+                        res = contract.builder.build_and(
+                            res,
+                            contract
+                                .builder
+                                .build_int_compare(IntPredicate::EQ, l, r, ""),
+                            "cmp",
+                        );
+                    }
+
+                    res.into()
+                } else {
+                    let left = self
+                        .expression(contract, l, vartab, function)
+                        .into_int_value();
+                    let right = self
+                        .expression(contract, r, vartab, function)
+                        .into_int_value();
+
+                    contract
+                        .builder
+                        .build_int_compare(IntPredicate::EQ, left, right, "")
+                        .into()
+                }
             }
             Expression::NotEqual(_, l, r) => {
                 let left = self
@@ -1582,7 +1675,13 @@ pub trait TargetRuntime<'a> {
                     .build_int_truncate(e, ty.into_int_type(), "")
                     .into()
             }
-            Expression::Cast(_, _, e) => self.expression(contract, e, vartab, function),
+            Expression::Cast(_, to, e) => {
+                let from = e.ty();
+
+                let e = self.expression(contract, e, vartab, function);
+
+                self.runtime_cast(contract, function, &from, to, e)
+            }
             Expression::BytesCast(_, ast::Type::Bytes(_), ast::Type::DynamicBytes, e) => {
                 let e = self
                     .expression(contract, e, vartab, function)
@@ -2504,7 +2603,7 @@ pub trait TargetRuntime<'a> {
             } => {
                 let address = self
                     .expression(contract, address, vartab, function)
-                    .into_int_value();
+                    .into_array_value();
 
                 let selector =
                     contract.ns.contracts[*contract_no].functions[*function_no].selector();
@@ -2673,6 +2772,102 @@ pub trait TargetRuntime<'a> {
         }
     }
 
+    fn runtime_cast(
+        &self,
+        contract: &Contract<'a>,
+        function: FunctionValue<'a>,
+        from: &ast::Type,
+        to: &ast::Type,
+        val: BasicValueEnum<'a>,
+    ) -> BasicValueEnum<'a> {
+        if matches!(from, ast::Type::Address(_) | ast::Type::Contract(_))
+            && matches!(to, ast::Type::Address(_) | ast::Type::Contract(_))
+        {
+            // no conversion needed
+            val
+        } else if let ast::Type::Address(_) = to {
+            let llvm_ty = contract.llvm_type(from);
+
+            let src = contract.build_alloca(function, llvm_ty, "dest");
+
+            contract.builder.build_store(src, val.into_int_value());
+
+            let dest = contract.build_alloca(function, contract.address_type(), "address");
+
+            let len = contract
+                .context
+                .i32_type()
+                .const_int(contract.ns.address_length as u64, false);
+
+            contract.builder.build_call(
+                contract.module.get_function("__leNtobeN").unwrap(),
+                &[
+                    contract
+                        .builder
+                        .build_pointer_cast(
+                            src,
+                            contract.context.i8_type().ptr_type(AddressSpace::Generic),
+                            "address_ptr",
+                        )
+                        .into(),
+                    contract
+                        .builder
+                        .build_pointer_cast(
+                            dest,
+                            contract.context.i8_type().ptr_type(AddressSpace::Generic),
+                            "dest_ptr",
+                        )
+                        .into(),
+                    len.into(),
+                ],
+                "",
+            );
+
+            contract.builder.build_load(dest, "val")
+        } else if let ast::Type::Address(_) = from {
+            let llvm_ty = contract.llvm_type(to);
+
+            let src = contract.build_alloca(function, contract.address_type(), "address");
+
+            contract.builder.build_store(src, val.into_array_value());
+
+            let dest = contract.build_alloca(function, llvm_ty, "dest");
+
+            let len = contract
+                .context
+                .i32_type()
+                .const_int(contract.ns.address_length as u64, false);
+
+            contract.builder.build_call(
+                contract.module.get_function("__beNtoleN").unwrap(),
+                &[
+                    contract
+                        .builder
+                        .build_pointer_cast(
+                            src,
+                            contract.context.i8_type().ptr_type(AddressSpace::Generic),
+                            "address_ptr",
+                        )
+                        .into(),
+                    contract
+                        .builder
+                        .build_pointer_cast(
+                            dest,
+                            contract.context.i8_type().ptr_type(AddressSpace::Generic),
+                            "dest_ptr",
+                        )
+                        .into(),
+                    len.into(),
+                ],
+                "",
+            );
+
+            contract.builder.build_load(dest, "val")
+        } else {
+            val
+        }
+    }
+
     #[allow(clippy::cognitive_complexity)]
     fn emit_cfg(
         &mut self,
@@ -2790,6 +2985,8 @@ pub trait TargetRuntime<'a> {
                         Variable {
                             value: if ty.is_pointer_type() {
                                 ty.into_pointer_type().const_zero().into()
+                            } else if ty.is_array_type() {
+                                ty.into_array_type().const_zero().into()
                             } else {
                                 ty.into_int_type().const_zero().into()
                             },
@@ -3600,7 +3797,7 @@ pub trait TargetRuntime<'a> {
 
                                     let address = self
                                         .expression(contract, address, &w.vars, function)
-                                        .into_int_value();
+                                        .into_array_value();
 
                                     (payload, payload_len, address)
                                 } else {
@@ -3666,7 +3863,7 @@ pub trait TargetRuntime<'a> {
                                     let address = contract
                                         .builder
                                         .build_load(address_member, "address")
-                                        .into_int_value();
+                                        .into_array_value();
 
                                     (payload, payload_len, address)
                                 }
@@ -3679,7 +3876,7 @@ pub trait TargetRuntime<'a> {
                                         &w.vars,
                                         function,
                                     )
-                                    .into_int_value();
+                                    .into_array_value();
 
                                 if let ast::Expression::BytesLiteral(_, _, bs) = payload {
                                     assert_eq!(bs.len(), 0);
@@ -3954,7 +4151,7 @@ pub trait TargetRuntime<'a> {
                     Instr::SelfDestruct { recipient } => {
                         let recipient = self
                             .expression(contract, recipient, &w.vars, function)
-                            .into_int_value();
+                            .into_array_value();
 
                         self.selfdestruct(contract, recipient);
                     }
@@ -5101,10 +5298,11 @@ impl<'a> Contract<'a> {
             .custom_width_int_type(self.ns.value_length as u32 * 8)
     }
 
-    /// llvm address type
-    fn address_type(&self) -> IntType<'a> {
+    /// llvm address type is an opaque array of bytes
+    fn address_type(&self) -> ArrayType<'a> {
         self.context
-            .custom_width_int_type(self.ns.address_length as u32 * 8)
+            .i8_type()
+            .array_type(self.ns.address_length as u32)
     }
 
     /// Creates global string in the llvm module with initializer
@@ -5146,8 +5344,12 @@ impl<'a> Contract<'a> {
             .expect("function missing entry block");
         let current = self.builder.get_insert_block().unwrap();
 
-        self.builder
-            .position_before(&entry.get_first_instruction().unwrap());
+        if let Some(instr) = &entry.get_first_instruction() {
+            self.builder.position_before(instr);
+        } else {
+            // if there is no instruction yet, then nothing was built
+            self.builder.position_at_end(entry);
+        }
 
         let res = self.builder.build_alloca(ty, name);
 
@@ -5644,7 +5846,7 @@ impl<'a> Contract<'a> {
                     .custom_width_int_type(self.ns.value_length as u32 * 8),
             ),
             ast::Type::Contract(_) | ast::Type::Address(_) => {
-                BasicTypeEnum::IntType(self.address_type())
+                BasicTypeEnum::ArrayType(self.address_type())
             }
             ast::Type::Bytes(n) => {
                 BasicTypeEnum::IntType(self.context.custom_width_int_type(*n as u32 * 8))

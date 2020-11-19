@@ -6,7 +6,9 @@ use std::str;
 
 use inkwell::context::Context;
 use inkwell::types::IntType;
-use inkwell::values::{BasicValueEnum, FunctionValue, IntValue, PointerValue, UnnamedAddress};
+use inkwell::values::{
+    ArrayValue, BasicValueEnum, FunctionValue, IntValue, PointerValue, UnnamedAddress,
+};
 use inkwell::AddressSpace;
 use inkwell::OptimizationLevel;
 use tiny_keccak::{Hasher, Keccak};
@@ -685,7 +687,7 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
     }
 
     /// Terminate execution, destroy contract and send remaining funds to addr
-    fn selfdestruct<'b>(&self, _contract: &Contract<'b>, _addr: IntValue<'b>) {
+    fn selfdestruct<'b>(&self, _contract: &Contract<'b>, _addr: ArrayValue<'b>) {
         unimplemented!();
     }
 

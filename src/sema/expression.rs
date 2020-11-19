@@ -576,6 +576,31 @@ pub fn try_cast(
                 ))
             }
         }
+        (&Expression::NumberLiteral(_, _, ref n), p, &Type::Address(payable))
+            if p.is_primitive() =>
+        {
+            // note: negative values are allowed
+            return if implicit {
+                Err(Diagnostic::type_error(
+                    *loc,
+                    String::from("implicit conversion from int to address not allowed"),
+                ))
+            } else if n.bits() >= ns.address_length as u64 * 8 {
+                Err(Diagnostic::type_error(
+                    *loc,
+                    format!(
+                        "number larger than possible in {} byte address",
+                        ns.address_length,
+                    ),
+                ))
+            } else {
+                Ok(Expression::NumberLiteral(
+                    *loc,
+                    Type::Address(payable),
+                    n.clone(),
+                ))
+            };
+        }
         // Literal strings can be implicitly lengthened
         (&Expression::BytesLiteral(_, _, ref bs), p, &Type::Bytes(to_len)) if p.is_primitive() => {
             return if bs.len() > to_len as usize && implicit {
@@ -854,15 +879,31 @@ fn cast_types(
                         from.to_string(ns)
                     ),
                 ))
-            } else if *from_len > address_bits {
-                Ok(Expression::Trunc(*loc, to.clone(), Box::new(expr)))
-            } else if *from_len < address_bits {
-                Ok(Expression::ZeroExt(*loc, to.clone(), Box::new(expr)))
             } else {
+                // cast integer it to integer of the same size of address with sign ext etc
+                let address_to_int = if from.is_signed_int() {
+                    Type::Int(address_bits)
+                } else {
+                    Type::Uint(address_bits)
+                };
+
+                let expr = if *from_len > address_bits {
+                    Expression::Trunc(*loc, address_to_int, Box::new(expr))
+                } else if *from_len < address_bits {
+                    if from.is_signed_int() {
+                        Expression::ZeroExt(*loc, to.clone(), Box::new(expr))
+                    } else {
+                        Expression::SignExt(*loc, to.clone(), Box::new(expr))
+                    }
+                } else {
+                    expr
+                };
+
+                // Now cast integer to address
                 Ok(Expression::Cast(*loc, to.clone(), Box::new(expr)))
             }
         }
-        // Casting int address to int
+        // Casting address to int
         (Type::Address(_), Type::Uint(to_len)) | (Type::Address(_), Type::Int(to_len)) => {
             if implicit {
                 Err(Diagnostic::type_error(
@@ -873,12 +914,28 @@ fn cast_types(
                         to.to_string(ns)
                     ),
                 ))
-            } else if *to_len < address_bits {
-                Ok(Expression::Trunc(*loc, to.clone(), Box::new(expr)))
-            } else if *to_len > address_bits {
-                Ok(Expression::ZeroExt(*loc, to.clone(), Box::new(expr)))
             } else {
-                Ok(Expression::Cast(*loc, to.clone(), Box::new(expr)))
+                // first convert address to int/uint
+                let address_to_int = if to.is_signed_int() {
+                    Type::Int(address_bits)
+                } else {
+                    Type::Uint(address_bits)
+                };
+
+                let expr = Expression::Cast(*loc, address_to_int, Box::new(expr));
+
+                // now resize int to request size with sign extension etc
+                if *to_len < address_bits {
+                    Ok(Expression::Trunc(*loc, to.clone(), Box::new(expr)))
+                } else if *to_len > address_bits {
+                    if to.is_signed_int() {
+                        Ok(Expression::ZeroExt(*loc, to.clone(), Box::new(expr)))
+                    } else {
+                        Ok(Expression::SignExt(*loc, to.clone(), Box::new(expr)))
+                    }
+                } else {
+                    Ok(expr)
+                }
             }
         }
         // Lengthing or shorting a fixed bytes array
