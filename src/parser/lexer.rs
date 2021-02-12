@@ -183,7 +183,8 @@ impl<'input> fmt::Display for Token<'input> {
             Token::AddressLiteral(address) => write!(f, "{}", address),
             Token::Number(base, exp) if exp.is_empty() => write!(f, "{}", base),
             Token::Number(base, exp) => write!(f, "{}e{}", base, exp),
-            Token::RationalNumber(mantissa, exp) => write!(f, "{}e{}", mantissa, exp),
+            Token::RationalNumber(base, exp) if exp.is_empty() => write!(f, "{}", base),
+            Token::RationalNumber(base, exp) => write!(f, "{}e{}", base, exp),
             Token::HexNumber(n) => write!(f, "{}", n),
             Token::Uint(w) => write!(f, "uint{}", w),
             Token::Int(w) => write!(f, "int{}", w),
@@ -317,6 +318,7 @@ pub enum LexicalError {
     InvalidCharacterInHexLiteral(usize, char),
     UnrecognisedToken(usize, usize, String),
     MissingExponent(usize, usize),
+    DoublePoints(usize, usize),
     ExpectedFrom(usize, usize, String),
     DoublePoints(usize, usize),
     UnrecognisedDecimal(usize, usize)
@@ -596,7 +598,7 @@ impl<'input> Lexer<'input> {
             is_rational = true;
             self.chars.next();
             while let Some((i, ch)) = self.chars.peek() {
-                if is_rational && *ch == '.' {
+                if *ch == '.' {
                     return Err(LexicalError::DoublePoints(start, self.input.len()));
                 }
                 if !ch.is_ascii_digit() {
