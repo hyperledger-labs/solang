@@ -319,6 +319,7 @@ pub enum LexicalError {
     UnrecognisedToken(usize, usize, String),
     MissingExponent(usize, usize),
     DoublePoints(usize, usize),
+    UnrecognisedDecimal(usize, usize),
     ExpectedFrom(usize, usize, String),
     DoublePoints(usize, usize),
     UnrecognisedDecimal(usize, usize)
@@ -342,7 +343,7 @@ impl fmt::Display for LexicalError {
             LexicalError::ExpectedFrom(_, _, t) => write!(f, "‘{}’ found where ‘from’ expected", t),
             LexicalError::MissingExponent(_, _) => write!(f, "missing number"),
             LexicalError::DoublePoints(_, _) => write!(f, "found two dots in number"),
-            LexicalError::UnrecognisedDecimal(_, _) => write!(f, "expected number after . marker"),
+            LexicalError::UnrecognisedDecimal(_, _) => write!(f, "expected number after decimal point"),
         }
     }
 }
@@ -1023,12 +1024,12 @@ impl<'input> Lexer<'input> {
                     };
                 }
                 Some((i, '.')) => {
-                    if let Some((_, a)) = self.chars.peek()  {
+                    if let Some((_, a)) = self.chars.peek() {
                         if a.is_ascii_digit() {
                             return Some(self.parse_number(i + 1, i + 1, '.'));
                         }
                     }
-                    return Some(Ok((i, Token::Member, i + 1)))
+                    return Some(Ok((i, Token::Member, i + 1)));
                 }
                 Some((i, '[')) => return Some(Ok((i, Token::OpenBracket, i + 1))),
                 Some((i, ']')) => return Some(Ok((i, Token::CloseBracket, i + 1))),
