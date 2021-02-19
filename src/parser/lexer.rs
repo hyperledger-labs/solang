@@ -321,8 +321,6 @@ pub enum LexicalError {
     DoublePoints(usize, usize),
     UnrecognisedDecimal(usize, usize),
     ExpectedFrom(usize, usize, String),
-    DoublePoints(usize, usize),
-    UnrecognisedDecimal(usize, usize)
 }
 
 impl fmt::Display for LexicalError {
