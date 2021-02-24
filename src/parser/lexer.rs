@@ -341,7 +341,9 @@ impl fmt::Display for LexicalError {
             LexicalError::ExpectedFrom(_, _, t) => write!(f, "‘{}’ found where ‘from’ expected", t),
             LexicalError::MissingExponent(_, _) => write!(f, "missing number"),
             LexicalError::DoublePoints(_, _) => write!(f, "found two dots in number"),
-            LexicalError::UnrecognisedDecimal(_, _) => write!(f, "expected number after decimal point"),
+            LexicalError::UnrecognisedDecimal(_, _) => {
+                write!(f, "expected number after decimal point")
+            }
         }
     }
 }
@@ -544,7 +546,7 @@ impl<'input> Lexer<'input> {
         end: usize,
         ch: char,
     ) -> Result<(usize, Token<'input>, usize), LexicalError> {
-        let mut  is_rational = false;
+        let mut is_rational = false;
         if ch == '0' {
             if let Some((_, 'x')) = self.chars.peek() {
                 // hex number
@@ -1163,7 +1165,7 @@ fn lexertest() {
     );
 
     let tokens = Lexer::new("// foo bar\n0x00fead0_12 9.0008 0_0")
-    .collect::<Vec<Result<(usize, Token, usize), LexicalError>>>();
+        .collect::<Vec<Result<(usize, Token, usize), LexicalError>>>();
 
     assert_eq!(
         tokens,
@@ -1175,7 +1177,7 @@ fn lexertest() {
     );
 
     let tokens = Lexer::new("// foo bar\n0x00fead0_12 .0008 0.9e2")
-    .collect::<Vec<Result<(usize, Token, usize), LexicalError>>>();
+        .collect::<Vec<Result<(usize, Token, usize), LexicalError>>>();
 
     assert_eq!(
         tokens,
@@ -1187,7 +1189,7 @@ fn lexertest() {
     );
 
     let tokens = Lexer::new("// foo bar\n0x00fead0_12 .0008 0.9e-2")
-    .collect::<Vec<Result<(usize, Token, usize), LexicalError>>>();
+        .collect::<Vec<Result<(usize, Token, usize), LexicalError>>>();
 
     assert_eq!(
         tokens,
