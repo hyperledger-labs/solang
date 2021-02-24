@@ -2,6 +2,7 @@ use super::symtable::Symtable;
 use crate::codegen::cfg::ControlFlowGraph;
 use crate::parser::pt;
 use crate::Target;
+use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::fmt;
@@ -15,6 +16,7 @@ pub enum Type {
     Int(u16),
     Uint(u16),
     Bytes(u8),
+    Rational,
     DynamicBytes,
     String,
     Array(Box<Type>, Vec<Option<BigInt>>),
@@ -233,6 +235,7 @@ impl Function {
                         Type::Int(n) => format!("int{}", n),
                         Type::Uint(n) => format!("uint{}", n),
                         Type::Bytes(n) => format!("bytes{}", n),
+                        Type::Rational => "rational".to_string(),
                         Type::DynamicBytes => "bytes".to_string(),
                         Type::String => "string".to_string(),
                         Type::Enum(i) => format!("{}", ns.enums[*i]),
@@ -300,6 +303,7 @@ impl From<&pt::Type> for Type {
             pt::Type::Uint(n) => Type::Uint(*n),
             pt::Type::Bytes(n) => Type::Bytes(*n),
             pt::Type::String => Type::String,
+            pt::Type::Rational => Type::Rational,
             pt::Type::DynamicBytes => Type::DynamicBytes,
             // needs special casing
             pt::Type::Function { .. } => unimplemented!(),
@@ -470,6 +474,7 @@ pub enum Expression {
     BytesLiteral(pt::Loc, Type, Vec<u8>),
     CodeLiteral(pt::Loc, usize, bool),
     NumberLiteral(pt::Loc, Type, BigInt),
+    RationalNumberLiteral(pt::Loc, Type, BigDecimal),
     StructLiteral(pt::Loc, Type, Vec<Expression>),
     ArrayLiteral(pt::Loc, Type, Vec<u32>, Vec<Expression>),
     ConstArrayLiteral(pt::Loc, Type, Vec<u32>, Vec<Expression>),

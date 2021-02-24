@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
 use std::fmt;
 
@@ -50,6 +51,7 @@ pub enum Type {
     Int(u16),
     Uint(u16),
     Bytes(u8),
+    Rational,
     DynamicBytes,
     Mapping(Loc, Box<Expression>, Box<Expression>),
     Function {
@@ -71,6 +73,7 @@ impl fmt::Display for Type {
             Type::Int(n) => write!(f, "int{}", n),
             Type::Uint(n) => write!(f, "uint{}", n),
             Type::Bytes(n) => write!(f, "bytes{}", n),
+            Type::Rational => write!(f, "rational"),
             Type::DynamicBytes => write!(f, "bytes"),
             Type::Mapping(_, _, _) => write!(f, "mapping(key => value)"),
             Type::Function { .. } => write!(f, "function()"),
@@ -299,6 +302,7 @@ pub enum Expression {
     AssignModulo(Loc, Box<Expression>, Box<Expression>),
     BoolLiteral(Loc, bool),
     NumberLiteral(Loc, BigInt),
+    RationalNumberLiteral(Loc, BigDecimal),
     HexNumberLiteral(Loc, String),
     StringLiteral(Vec<StringLiteral>),
     Type(Loc, Type),
@@ -362,6 +366,7 @@ impl Expression {
             | Expression::AssignModulo(loc, _, _)
             | Expression::BoolLiteral(loc, _)
             | Expression::NumberLiteral(loc, _)
+            | Expression::RationalNumberLiteral(loc, _, _)
             | Expression::HexNumberLiteral(loc, _)
             | Expression::ArrayLiteral(loc, _)
             | Expression::List(loc, _)
