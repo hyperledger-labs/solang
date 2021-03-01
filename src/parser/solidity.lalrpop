@@ -394,13 +394,13 @@ NoFunctionTyPrecedence0: Expression = {
         Expression::NumberLiteral(Loc(file_no, l, r), n)
     },
         <l:@L> <n:rational> <r:@R> => {
-        let base: String = n.0.chars();
-        let exp: String = n.1.chars();
+        let base: String = n.0.to_string();
+        let exp: String = n.1.to_string();
 
         let n = if exp.is_empty() {
-            let dec = BigDecimal::from_str(&base).unwrap()
+            BigDecimal::from_str(&base).unwrap()
         } else {
-            let base = BigInt::from_str(&base).unwrap();
+            let base = BigDecimal::from_str(&base).unwrap();
             let exp = BigInt::from_str("10").unwrap().pow(BigUint::from_str(&exp).unwrap());
 
             base.mul(exp)

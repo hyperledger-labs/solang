@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
 use num_bigint::Sign;
 use num_traits::FromPrimitive;
@@ -34,6 +35,7 @@ impl Expression {
             | Expression::BytesLiteral(loc, _, _)
             | Expression::CodeLiteral(loc, _, _)
             | Expression::NumberLiteral(loc, _, _)
+            | Expression::RationalNumberLiteral(loc, _, _)
             | Expression::StructLiteral(loc, _, _)
             | Expression::ArrayLiteral(loc, _, _, _)
             | Expression::ConstArrayLiteral(loc, _, _, _)
@@ -121,6 +123,7 @@ impl Expression {
             | Expression::FunctionArg(_, ty, _)
             | Expression::BytesLiteral(_, ty, _)
             | Expression::NumberLiteral(_, ty, _)
+            | Expression::RationalNumberLiteral(_, ty, _)
             | Expression::StructLiteral(_, ty, _)
             | Expression::ArrayLiteral(_, ty, _, _)
             | Expression::ConstArrayLiteral(_, ty, _, _)
@@ -545,6 +548,50 @@ pub fn bigint_to_expression(
         Ok(Expression::NumberLiteral(
             *loc,
             Type::Uint(int_size),
+            n.clone(),
+        ))
+    }
+}
+
+/// Try to convert a Bigfloat into a Expression::RationalNumberLiteral. This checks for sign,
+/// width and creates to correct Type.
+pub fn bigfloat_to_expression(
+    loc: &pt::Loc,
+    n: &BigDecimal,
+    ns: &Namespace,
+    diagnostics: &mut Vec<Diagnostic>,
+    resolve_to: Option<&Type>,
+) -> Result<Expression, ()> {
+    let digits = n.digits(); //Todo Find its limit
+
+    if let Some(resolve_to) = resolve_to {
+        if digits > 256 {
+            diagnostics.push(Diagnostic::error(*loc, format!("{} is too large", n)));
+            return Err(());
+        } else {
+            return Ok(Expression::RationalNumberLiteral(
+                *loc,
+                resolve_to.clone(),
+                n.clone(),
+            ));
+        }
+    };
+
+    if n.sign() == Sign::Minus {
+        if digits > 255 {
+            diagnostics.push(Diagnostic::error(*loc, format!("{} is too large", n)));
+            return Err(());
+        } else {
+            return Ok(Expression::RationalNumberLiteral(
+                *loc,
+                Type::Rational,
+                n.clone(),
+            ));
+        }
+    } else {
+        Ok(Expression::RationalNumberLiteral(
+            *loc,
+            Type::Rational,
             n.clone(),
         ))
     }
@@ -1366,6 +1413,9 @@ pub fn expression(
         }
         pt::Expression::NumberLiteral(loc, b) => {
             bigint_to_expression(loc, b, ns, diagnostics, resolve_to)
+        }
+        pt::Expression::RationalNumberLiteral(loc, b) => {
+            bigfloat_to_expression(loc, b, ns, diagnostics, resolve_to)
         }
         pt::Expression::HexNumberLiteral(loc, n) => {
             // ns.address_length is in bytes; double for hex and two for the leading 0x

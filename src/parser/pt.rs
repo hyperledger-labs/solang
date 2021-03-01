@@ -366,7 +366,7 @@ impl Expression {
             | Expression::AssignModulo(loc, _, _)
             | Expression::BoolLiteral(loc, _)
             | Expression::NumberLiteral(loc, _)
-            | Expression::RationalNumberLiteral(loc, _, _)
+            | Expression::RationalNumberLiteral(loc, _)
             | Expression::HexNumberLiteral(loc, _)
             | Expression::ArrayLiteral(loc, _)
             | Expression::List(loc, _)

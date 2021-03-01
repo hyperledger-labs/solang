@@ -679,6 +679,7 @@ impl Type {
             Type::Address(true) => "address payable".to_string(),
             Type::Int(n) => format!("int{}", n),
             Type::Uint(n) => format!("uint{}", n),
+            Type::Rational => "rational".to_string(),
             Type::Value => format!("uint{}", ns.value_length * 8),
             Type::Bytes(n) => format!("bytes{}", n),
             Type::String => "string".to_string(),
@@ -756,6 +757,7 @@ impl Type {
             Type::Int(_) => true,
             Type::Uint(_) => true,
             Type::Bytes(_) => true,
+            Type::Rational => true,
             Type::Value => true,
             Type::Ref(r) => r.is_primitive(),
             Type::StorageRef(r) => r.is_primitive(),
@@ -772,6 +774,7 @@ impl Type {
             Type::Contract(_) | Type::Address(_) => format!("bytes{}", ns.address_length),
             Type::Int(n) => format!("int{}", n),
             Type::Uint(n) => format!("uint{}", n),
+            Type::Rational => "rational".to_string(),
             Type::Bytes(n) => format!("bytes{}", n),
             Type::DynamicBytes => "bytes".to_string(),
             Type::String => "string".to_string(),
@@ -864,6 +867,7 @@ impl Type {
             Type::Contract(_) | Type::Address(_) => BigInt::from(ns.address_length),
             Type::Bytes(n) => BigInt::from(*n),
             Type::Uint(n) | Type::Int(n) => BigInt::from(n / 8),
+            Type::Rational => BigInt::from(64), // ToDO .. figure out the size of Rational
             Type::Array(ty, dims) => {
                 let pointer_size = BigInt::from(4);
                 ty.size_of(ns).mul(
@@ -915,6 +919,7 @@ impl Type {
             Type::Bool => 1,
             Type::Int(n) => *n,
             Type::Uint(n) => *n,
+            Type::Rational => 64, //ToDo figure out the size
             Type::Bytes(n) => *n as u16 * 8,
             Type::Enum(n) => ns.enums[*n].ty.bits(ns),
             Type::Value => ns.value_length as u16 * 8,
@@ -926,6 +931,7 @@ impl Type {
     pub fn is_signed_int(&self) -> bool {
         match self {
             Type::Int(_) => true,
+            Type::Rational => true,
             Type::Ref(r) => r.is_signed_int(),
             Type::StorageRef(r) => r.is_signed_int(),
             _ => false,
@@ -980,6 +986,7 @@ impl Type {
             Type::Address(_) => false,
             Type::Int(_) => false,
             Type::Uint(_) => false,
+            Type::Rational => false,
             Type::Bytes(_) => false,
             Type::Enum(_) => false,
             Type::Struct(_) => true,
